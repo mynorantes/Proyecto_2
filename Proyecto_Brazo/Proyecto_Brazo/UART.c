@@ -1,5 +1,6 @@
 /*
  * UART.c
+ *  Author: Mynor Orantes Gonzalez
  */ 
 
 #include "UART.h"

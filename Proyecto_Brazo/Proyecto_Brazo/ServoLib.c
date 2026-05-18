@@ -1,22 +1,42 @@
+/*
+ * ServoLib.c
+ *  Author: Mynor Orantes Gonzalez
+ */ 
+
 #include "ServoLib.h"
+#include <avr/io.h>
 
 void initServoPWM(void) {
-	// Configurar PB1 (OC1A) y PB2 (OC1B) como salidas
-	DDRB |= (1 << DDB1) | (1 << DDB2);
+	// Configurar salidas: PB1, PB2, PB3 y PD3
+	DDRB |= (1 << DDB1) | (1 << DDB2) | (1 << DDB3);
+	DDRD |= (1 << DDD3);
 
-	// Modo 14: Fast PWM con TOP en ICR1
-	// COM1A1 y COM1B1: Non-inverting (limpia en comparar, set en TOP)
+	// --- TIMER 1 (16 bits) ---
 	TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
-	TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11); // Prescaler 8
+	TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11);
+	ICR1 = 39999;
 
-	ICR1 = 39999; // Frecuencia de 50Hz (20ms)
+	// --- TIMER 2 (8 bits) ---
+	TCCR2A = (1 << COM2A1) | (1 << COM2B1) | (1 << WGM21) | (1 << WGM20);
+	TCCR2B = (1 << CS22) | (1 << CS21) | (1 << CS20);
 }
 
-void setServo1(uint16_t adc_val) {
-	// Mapeo: ADC(0-1023) a Pulso(2000-4000) -> 1ms a 2ms
-	OCR1A = 1000 + (adc_val * 2000UL) / 1023;
+void setServo1(uint16_t angle) {
+	if (angle == 90) { TCCR2A &= ~(1 << COM2B1); PORTD &= ~(1 << PD3); }
+	else { TCCR2A |= (1 << COM2B1); OCR2B = 6 + (angle / 7); }
 }
 
-void setServo2(uint16_t adc_val) {
-	OCR1B = 1000 + (adc_val * 2000UL) / 1023;
+void setServo2(uint16_t angle) {
+	if (angle == 90) { TCCR2A &= ~(1 << COM2A1); PORTB &= ~(1 << PB3); }
+	else { TCCR2A |= (1 << COM2A1); OCR2A = 6 + (angle / 7); }
+}
+
+void setServo3(uint16_t angle) {
+	if (angle == 90) { TCCR1A &= ~(1 << COM1B1); PORTB &= ~(1 << PB2); }
+	else { TCCR1A |= (1 << COM1B1); OCR1B = 2000 + (angle * 11.11); }
+}
+
+void setServo4(uint16_t angle) {
+	if (angle == 90) { TCCR1A &= ~(1 << COM1A1); PORTB &= ~(1 << PB1); }
+	else { TCCR1A |= (1 << COM1A1); OCR1A = 2000 + (angle * 11.11); }
 }
