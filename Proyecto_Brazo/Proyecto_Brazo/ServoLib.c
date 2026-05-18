@@ -4,39 +4,51 @@
  */ 
 
 #include "ServoLib.h"
-#include <avr/io.h>
 
-void initServoPWM(void) {
-	// Configurar salidas: PB1, PB2, PB3 y PD3
-	DDRB |= (1 << DDB1) | (1 << DDB2) | (1 << DDB3);
-	DDRD |= (1 << DDD3);
+int16_t ang1 = 90;
+int16_t ang2 = 90;
+int16_t ang3 = 90;
+int16_t ang4 = 90;
 
-	// --- TIMER 1 (16 bits) ---
+void init_all_servos(void) {
+	DDRB |= (1 << PB1) | (1 << PB2) | (1 << PB3);
+	DDRD |= (1 << PD3);
+	DDRD |= (1 << PD5) | (1 << PD6) | (1 << PD7);
+
 	TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
 	TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11);
 	ICR1 = 39999;
 
-	// --- TIMER 2 (8 bits) ---
 	TCCR2A = (1 << COM2A1) | (1 << COM2B1) | (1 << WGM21) | (1 << WGM20);
 	TCCR2B = (1 << CS22) | (1 << CS21) | (1 << CS20);
 }
 
-void setServo1(uint16_t angle) {
-	if (angle == 90) { TCCR2A &= ~(1 << COM2B1); PORTD &= ~(1 << PD3); }
-	else { TCCR2A |= (1 << COM2B1); OCR2B = 6 + (angle / 7); }
+void init_ADC(void) {
+	ADMUX = (1 << REFS0);
+	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+	DDRC &= ~((1 << PC2) | (1 << PC5));
+	PORTC |= (1 << PC2) | (1 << PC5);
 }
 
-void setServo2(uint16_t angle) {
-	if (angle == 90) { TCCR2A &= ~(1 << COM2A1); PORTB &= ~(1 << PB3); }
-	else { TCCR2A |= (1 << COM2A1); OCR2A = 6 + (angle / 7); }
+uint16_t leer_ADC(uint8_t canal) {
+	ADMUX = (ADMUX & 0xF0) | (canal & 0x0F);
+	ADCSRA |= (1 << ADSC);
+	while (ADCSRA & (1 << ADSC));
+	ADCSRA |= (1 << ADSC);
+	while (ADCSRA & (1 << ADSC));
+	return ADC;
 }
 
-void setServo3(uint16_t angle) {
-	if (angle == 90) { TCCR1A &= ~(1 << COM1B1); PORTB &= ~(1 << PB2); }
-	else { TCCR1A |= (1 << COM1B1); OCR1B = 2000 + (angle * 11.11); }
+void actualizar_servos(void) {
+	OCR2B = 10 + ((ang1 * 22) / 180);
+	OCR2A = 10 + ((ang2 * 22) / 180);
+	OCR1B = 2000 + (ang3 * 11.11);
+	OCR1A = 2000 + (ang4 * 11.11);
 }
 
-void setServo4(uint16_t angle) {
-	if (angle == 90) { TCCR1A &= ~(1 << COM1A1); PORTB &= ~(1 << PB1); }
-	else { TCCR1A |= (1 << COM1A1); OCR1A = 2000 + (angle * 11.11); }
+void actualizar_leds_modo(uint8_t estado) {
+	PORTD &= ~((1 << PD5) | (1 << PD6) | (1 << PD7));
+	if (estado == 0) PORTD |= (1 << PD5);
+	else if (estado == 1) PORTD |= (1 << PD6);
+	else if (estado == 2) PORTD |= (1 << PD7);
 }

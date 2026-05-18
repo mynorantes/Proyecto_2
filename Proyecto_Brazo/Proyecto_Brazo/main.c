@@ -8,126 +8,107 @@
 
 
 
-#ifndef F_CPU
-#define F_CPU 16000000UL
-#endif
-
-#include <avr/io.h>
+#include "ServoLib.h"
+#include "UART.h"
+#include "EEPROM.h"
 #include <util/delay.h>
 
-// Variables globales para retener la posición actual de cada servo (0 a 180)
-// Iniciamos las variables en 90 para que sea el punto de partida tras un RESET
-int16_t ang1 = 90;
-int16_t ang2 = 90;
-int16_t ang3 = 90;
-int16_t ang4 = 90;
+typedef enum {
+	MODO_MANUAL,
+	MODO_EEPROM,
+	MODO_UART
+} EstadoSistema;
 
-// Inicialización de los Timers para PWM
-void init_all_servos(void) {
-	// Configurar pines como salidas: PB1, PB2, PB3 y PD3
-	DDRB |= (1 << PB1) | (1 << PB2) | (1 << PB3);
-	DDRD |= (1 << PD3);
-
-	// Timer 1 (16 bits) - Modo 14 (Fast PWM con ICR1 como TOP)
-	TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
-	TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11); // Prescaler de 8
-	ICR1 = 39999; // Frecuencia de 50Hz para servos
-
-	// Timer 2 (8 bits) - Modo Fast PWM
-	TCCR2A = (1 << COM2A1) | (1 << COM2B1) | (1 << WGM21) | (1 << WGM20);
-	TCCR2B = (1 << CS22) | (1 << CS21) | (1 << CS20); // Prescaler de 1024
-}
-
-// Inicialización del Convertidor Analógico-Digital (ADC)
-void init_ADC(void) {
-	ADMUX = (1 << REFS0); // Voltaje de referencia en AVCC (5V)
-	ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0); // Prescaler 128
-}
-
-// Función para leer canales del ADC
-uint16_t leer_ADC(uint8_t canal) {
-	ADMUX = (ADMUX & 0xF0) | (canal & 0x0F);
-	ADCSRA |= (1 << ADSC); // Iniciar conversión
-	while (ADCSRA & (1 << ADSC)); // Esperar a que termine
-	return ADC;
-}
-
-// Funciones de mapeo matemático directo a los registros OCR
-void actualizar_servos(void) {
-	// Timer 2 (8 bits): Rango aproximado de 6 (0°) a 32 (180°). 19 es aprox 90°
-	OCR2B = 6 + (ang1 / 7);  // Servo 1 (PD3)
-	OCR2A = 6 + (ang2 / 7);  // Servo 2 (PB3)
-
-	// Timer 1 (16 bits): Rango de 2000 (0°) a 4000 (180°). 3000 es 90°
-	OCR1B = 2000 + (ang3 * 11.11); // Servo 3 (PB2)
-	OCR1A = 2000 + (ang4 * 11.11); // Servo 4 (PB1)
-}
+EstadoSistema estado_actual = MODO_MANUAL;
 
 int main(void) {
-	// 1. Inicializar Hardware
+	uint16_t j1, j2, j3, j4;
+
 	init_all_servos();
 	init_ADC();
+	init_UART(MYUBRR);
 
-	// 2. EFECTO RESET: Forzar los servos a 90 grados al arrancar.
-	// Como ang1...ang4 valen 90 de forma global, esto se ejecuta SOLO UNA VEZ.
+	ang1 = 90; ang2 = 90; ang3 = 90; ang4 = 90;
 	actualizar_servos();
-	
-	// Una pequeña pausa para darle tiempo a los motores de llegar a "Home" antes de leer los mandos
-	_delay_ms(500);
+	actualizar_leds_modo(MODO_MANUAL);
+	_delay_ms(600);
 
-	// 3. BUCLE DE CONTROL EN VIVO
+	cargar_contexto_eeprom();
+	UART_enviar_texto("Sistema Inicializado Modularmente. Modo Manual Activo.\r\n");
+
 	while (1) {
-		// Leer joysticks (Valores de 0 a 1023. Centro teórico ~512)
-		uint16_t j1 = leer_ADC(3); // Joystick 1 - Eje X (Controla Servo 1)
-		uint16_t j2 = leer_ADC(4); // Joystick 1 - Eje Y (Controla Servo 2)
-		uint16_t j3 = leer_ADC(0); // Joystick 2 - Eje X (Controla Servo 3)
-		uint16_t j4 = leer_ADC(1); // Joystick 2 - Eje Y (Controla Servo 4)
-
-		// --- CONTROL ACUMULATIVO (RETENCIÓN DE POSICIÓN) ---
-		
-		// Servo 1: Modifica el ángulo solo si empujas la palanca fuera de la zona muerta
-		if (j1 > 600) {
-			ang1 += 1;
-			if (ang1 > 180) ang1 = 180;
-			} else if (j1 < 400) {
-			ang1 -= 1;
-			if (ang1 < 0) ang1 = 0;
+		// Cambio de modos (Pulsador PC2)
+		if ((PINC & (1 << PC2)) == 0) {
+			_delay_ms(50);
+			if ((PINC & (1 << PC2)) == 0) {
+				if (estado_actual == MODO_MANUAL) {
+					estado_actual = MODO_EEPROM;
+					UART_enviar_texto("Cambio a: MODO EEPROM\r\n");
+					} else if (estado_actual == MODO_EEPROM) {
+					estado_actual = MODO_UART;
+					UART_enviar_texto("Cambio a: MODO UART (Adafruit IO)\r\n");
+					} else if (estado_actual == MODO_UART) {
+					estado_actual = MODO_MANUAL;
+					UART_enviar_texto("Cambio a: MODO MANUAL\r\n");
+				}
+				
+				actualizar_leds_modo(estado_actual);
+				paso_reproduccion_actual = 0;
+				buffer_index = 0;
+				trama_lista = 0;
+				
+				while ((PINC & (1 << PC2)) == 0);
+				_delay_ms(50);
+			}
 		}
 
-		// Servo 2
-		if (j2 > 600) {
-			ang2 += 1;
-			if (ang2 > 180) ang2 = 180;
-			} else if (j2 < 400) {
-			ang2 -= 1;
-			if (ang2 < 0) ang2 = 0;
+		escuchar_UART();
+
+		switch(estado_actual) {
+			
+			case MODO_MANUAL:
+			j3 = leer_ADC(0); j4 = leer_ADC(1);
+			j1 = leer_ADC(3); j2 = leer_ADC(4);
+
+			if (j1 > 600) { ang1 += 1; if (ang1 > 180) ang1 = 180; }
+			else if (j1 < 400) { ang1 -= 1; if (ang1 < 0) ang1 = 0; }
+
+			if (j2 > 600) { ang2 += 1; if (ang2 > 180) ang2 = 180; }
+			else if (j2 < 400) { ang2 -= 1; if (ang2 < 0) ang2 = 0; }
+
+			if (j3 > 600) { ang3 += 1; if (ang3 > 180) ang3 = 180; }
+			else if (j3 < 400) { ang3 -= 1; if (ang3 < 0) ang3 = 0; }
+
+			if (j4 > 600) { ang4 += 1; if (ang4 > 180) ang4 = 180; }
+			else if (j4 < 400) { ang4 -= 1; if (ang4 < 0) ang4 = 0; }
+
+			actualizar_servos();
+
+			// Guardar paso (Pulsador PC5)
+			if ((PINC & (1 << PC5)) == 0) {
+				_delay_ms(50);
+				if ((PINC & (1 << PC5)) == 0) {
+					guardar_paso_actual();
+					while ((PINC & (1 << PC5)) == 0);
+					_delay_ms(50);
+				}
+			}
+			break;
+
+			case MODO_EEPROM:
+			reproducir_paso_eeprom();
+			break;
+
+			case MODO_UART:
+			if (trama_lista) {
+				procesar_trama_serial();
+				buffer_index = 0;
+				trama_lista = 0;
+			}
+			break;
 		}
 
-		// Servo 3
-		if (j3 > 600) {
-			ang3 += 1;
-			if (ang3 > 180) ang3 = 180;
-			} else if (j3 < 400) {
-			ang3 -= 1;
-			if (ang3 < 0) ang3 = 0;
-		}
-
-		// Servo 4
-		if (j4 > 600) {
-			ang4 += 1;
-			if (ang4 > 180) ang4 = 180;
-			} else if (j4 < 400) {
-			ang4 -= 1;
-			if (ang4 < 0) ang4 = 0;
-		}
-
-		// 4. Aplicar los ángulos calculados a los Timers en tiempo real
-		actualizar_servos();
-
-		// Este delay controla la velocidad de respuesta del brazo.
-		// Si sientes que se mueve muy lento al dejar presionado el joystick, bájalo a 10ms o 15ms.
 		_delay_ms(20);
 	}
-
 	return 0;
 }
